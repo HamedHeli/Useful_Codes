@@ -1,0 +1,28 @@
+# Compute the distance matrix for the training data.
+# gw.dist calculates pairwise distances between spatial points, which is essential for geographically weighted regression.
+DM_GWR <- gw.dist(dp.locat = coordinates(train))
+
+# Define the regression formula for predicting SALE_PRICE.
+gwr_formula <- SALE_PRICE ~ TOTAL_AREA + AGE + ATT_GARAGE_AREA + DET_GARAGE_AREA + TIME
+
+# Select an adaptive bandwidth for GWR using cross-validation.
+# An adaptive bandwidth adjusts to the density of points in different areas.
+bw_GWR <- bw.gwr(
+  formula  = gwr_formula,
+  data     = train,
+  approach = "CV",          # Use Cross-Validation to select the optimal bandwidth.
+  kernel   = "exponential", # The exponential kernel gives weight to neighbors; closer points have higher influence.
+  adaptive = TRUE,          # Adaptive bandwidth means the number of neighbors is constant, but distance may vary.
+  dMat     = DM_GWR         # Use the precomputed distance matrix.
+)
+
+# Fit the GWR model using the selected bandwidth.
+model_GWR <- gwr.basic(
+  formula  = gwr_formula,
+  data     = train,
+  bw       = bw_GWR,
+  kernel   = "exponential", # Matches the kernel used in bandwidth selection.
+  adaptive = TRUE,
+  dMat     = DM_GWR
+)
+# Note: GWR allows for the estimation of spatially varying relationships between variables.
