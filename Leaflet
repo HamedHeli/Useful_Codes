@@ -1,0 +1,14 @@
+map_variable <- function(data, variable, title) {
+  # Create a color palette function based on the "Spectral" color scheme.
+  pal <- colorNumeric("Spectral", data[[variable]])
+  leaflet(data) %>%
+    addProviderTiles(providers$CartoDB.Positron) %>%  # Add a light-themed base map.
+    addCircles(
+      color = ~pal(data[[variable]]),  # Color circles based on variable values.
+      label = ~paste(variable, ":", round(data[[variable]], 2))  # Tooltip label with variable name and value.
+    ) %>%
+    addLegend("bottomright", pal = pal, values = data[[variable]], title = title)
+}
+
+# Generate maps for selected training dataset variables to visually inspect their spatial distribution.
+map_variable(train, "SALE_PRICE", "Sale Price")
