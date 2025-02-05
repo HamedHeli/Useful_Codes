@@ -1,6 +1,12 @@
+##############################################################################
+# 4. GWR Model Fitting
+##############################################################################
 # Compute the distance matrix for the training data.
 # gw.dist calculates pairwise distances between spatial points, which is essential for geographically weighted regression.
 DM_GWR <- gw.dist(dp.locat = coordinates(train))
+
+
+summary(matrix(DM_GWR))
 
 # Define the regression formula for predicting SALE_PRICE.
 gwr_formula <- SALE_PRICE ~ TOTAL_AREA + AGE + ATT_GARAGE_AREA + DET_GARAGE_AREA + TIME
@@ -26,3 +32,97 @@ model_GWR <- gwr.basic(
   dMat     = DM_GWR
 )
 # Note: GWR allows for the estimation of spatially varying relationships between variables.
+
+model_GWR
+
+##############################################################################
+# 5. Predictions on the Test Set
+##############################################################################
+# Compute the distance matrix between training and test data.
+# This matrix (DM_train_test) contains distances from each training point to each test point.
+DM_train_test <- gw.dist(dp.locat = coordinates(train), rp.locat = coordinates(test))
+
+# Predict SALE_PRICE for the test dataset using the GWR model.
+gwr_pred <- gwr.predict(
+  formula     = gwr_formula,
+  data        = train,
+  predictdata = test,        # New data for which predictions are made.
+  bw          = bw_GWR,
+  adaptive    = TRUE,
+  kernel      = "exponential",
+  dMat1       = DM_train_test,  # Distance matrix from training to test points.
+  dMat2       = DM_GWR         # Distance matrix among training points.
+)
+
+# Store the predicted sale prices and compute the ratio of predicted to actual sale prices.
+test$predicted_value <- gwr_pred$SDF$prediction
+test$Ratio <- test$predicted_value / test$SALE_PRICE
+
+##############################################################################
+# 6. GWR Model Visualization
+##############################################################################
+# Function to retrieve the local R² column from the model output.
+# This checks for possible column name variations and returns the correct one.
+get_local_r2 <- function(sdf) {
+  cn <- names(sdf@data)
+  if("Local_R2" %in% cn) return("Local_R2")
+  if("localR2" %in% cn) return("localR2")
+  stop("No local R² column found.")
+}
+
+# Function to create a map of local coefficients that pass a significance threshold.
+# It filters the spatial data based on the absolute value of the t-statistic for the variable.
+map_local_coeff_threshold <- function(model_obj, var, tvar, threshold = 1.99) {
+  sdf <- model_obj$SDF
+  if (!(var %in% names(sdf@data))) stop(paste("No local coefficient column for", var))
+  if (!(tvar %in% names(sdf@data))) stop(paste("No local t-statistic column for", var))
+  # Filter out points where the absolute t-value is below the threshold (i.e., not statistically significant).
+  sdf_sub <- sdf[abs(sdf@data[[tvar]]) > threshold, ]
+  # Create a color palette for mapping the coefficient values.
+  pal <- colorNumeric("RdYlBu", sdf_sub@data[[var]])
+  leaflet(sdf_sub) %>%
+    addProviderTiles(providers$CartoDB.Positron) %>%
+    addCircles(color = ~pal(sdf_sub@data[[var]])) %>%
+    addLegend("bottomright", pal = pal, values = sdf_sub@data[[var]], title = paste(var, "Coefficient"))
+}
+
+# Generate GWR coefficient maps for the AGE and TOTAL_AREA variables.
+# Only locations with a t-statistic above the threshold are visualized.
+map_local_coeff_threshold(model_GWR, "AGE", "AGE_TV", threshold = 1.99)
+map_local_coeff_threshold(model_GWR, "TOTAL_AREA", "TOTAL_AREA_TV", threshold = 1.99)
+
+##############################################################################
+# 7. Ratio Studies
+##############################################################################
+# Compute the natural logarithm of the ratio of predicted to actual sale prices.
+test$lnRatio <- log(test$Ratio)
+
+# Calculate the Interquartile Range (IQR) and the first (Q1) and third (Q3) quartiles.
+IQR_val <- IQR(test$lnRatio)
+Q1 <- quantile(test$lnRatio)[2]
+Q3 <- quantile(test$lnRatio)[4]
+
+# Remove outliers from lnRatio using the 1.5*IQR rule.
+# This is a common technique to reduce the influence of extreme values.
+test <- subset(test, lnRatio > (Q1 - (IQR_val * 1.5)))
+test <- subset(test, lnRatio < (Q3 + (IQR_val * 1.5)))
+
+# Convert the spatial object back to a regular data frame for summarization.
+test <- as.data.frame(test)
+
+# Compute summary statistics for the test dataset.
+# This includes count, median ratio, confidence intervals for the median, coefficient of dispersion (cod) 
+# and its confidence interval, and performance ratio difference (prd) and its confidence interval.
+summary_stats <- test %>%
+  summarise(
+    Count = n(),
+   med.ratio = median(Ratio),
+    MR_CI = paste(round(MedianCI(Ratio, conf.level = 0.95, na.rm = TRUE)[2:3], 3), collapse = ", "),
+    cod = cod(Ratio, na.rm = TRUE),
+    codci = paste(round(cod_ci(Ratio, nboot = 1000, na.rm = TRUE), 3), collapse = ", "),
+    prd = prd(predicted_value, SALE_PRICE, na.rm = TRUE),
+    prd_ci = paste(round(prd_ci(predicted_value, SALE_PRICE, na.rm = TRUE), 3), collapse = ", ")
+  )
+
+# Print the summary statistics.
+print(summary_stats)
